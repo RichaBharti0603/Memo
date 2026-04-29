@@ -1,9 +1,15 @@
+version: '3.8'
+
 services:
-  redis-golang:
+  cache-server:
     build: .
+    container_name: redis-golang
     ports:
-      - "6379:6379"
-    environment:
-      - HOST=0.0.0.0
-      - PORT=6379
+      - "6379:6379"  # TCP Server
+      - "8080:8080"  # Web Dashboard
+    volumes:
+      - redis_data:/root/
     restart: unless-stopped
+
+volumes:
+  redis_data:
