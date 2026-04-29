@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"redis_golang/config"
+	"redis_golang/internal/metrics"
 	"redis_golang/internal/storage/memory"
 	"redis_golang/pkg/logger"
 )
@@ -16,6 +17,7 @@ func RunSyncTCPServer() {
 	memory.StartCleanupRoutine()
 
 	var conClients int = 0
+	_ = conClients // keep for local logging if needed
 
 	addr := config.GlobalConfig.Host + ":" + strconv.Itoa(config.GlobalConfig.Port)
 	lsnr, err := net.Listen("tcp", addr)
@@ -32,13 +34,15 @@ func RunSyncTCPServer() {
 		}
 
 		conClients++
-		logger.Log.Info("client connected", "total_clients", conClients)
+		metrics.IncConn()
+		logger.Log.Info("client connected", "total_clients", metrics.GetActiveConnections())
 
 		go func(conn net.Conn) {
 			defer func() {
 				conn.Close()
 				conClients--
-				logger.Log.Info("client disconnected", "total_clients", conClients)
+				metrics.DecConn()
+				logger.Log.Info("client disconnected", "total_clients", metrics.GetActiveConnections())
 			}()
 
 			for {

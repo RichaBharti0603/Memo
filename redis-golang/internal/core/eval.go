@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"redis_golang/internal/metrics"
 	"redis_golang/internal/protocol/resp"
 	"redis_golang/internal/storage/memory"
 )
@@ -69,15 +70,18 @@ func evalGET(args []string, c io.ReadWriter) error {
 	obj := memory.Get(key)
 
 	if obj == nil {
+		metrics.IncMiss()
 		c.Write(resp.Nil)
 		return nil
 	}
 
 	if obj.ExpiresAt != -1 && obj.ExpiresAt <= time.Now().UnixMilli() {
+		metrics.IncMiss()
 		c.Write(resp.Nil)
 		return nil
 	}
 
+	metrics.IncHit()
 	c.Write(resp.Encode(obj.Value, false))
 	return nil
 }
@@ -129,6 +133,7 @@ func evalDEL(args []string, c io.ReadWriter) error {
 }
 
 func EvalAndRespond(cmd *RedisCmd, c io.ReadWriter) error {
+	metrics.IncCmd()
 	switch cmd.Cmd {
 	case "PING":
 		return evalPING(cmd.Args, c)

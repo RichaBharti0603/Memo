@@ -6,12 +6,19 @@ import (
 )
 
 var Log *slog.Logger
+var MemHandler *MemoryHandler
 
-func InitLogger() {
-	opts := &slog.HandlerOptions{
+func InitLogger(useTUI bool) {
+	opts := slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}
-	handler := slog.NewJSONHandler(os.Stdout, opts)
-	Log = slog.New(handler)
+	
+	var baseHandler slog.Handler
+	if !useTUI {
+		baseHandler = slog.NewJSONHandler(os.Stdout, &opts)
+	}
+	
+	MemHandler = NewMemoryHandler(100, baseHandler, opts)
+	Log = slog.New(MemHandler)
 	slog.SetDefault(Log)
 }

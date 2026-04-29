@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"redis_golang/config"
+	"redis_golang/internal/metrics"
 	"redis_golang/internal/storage/memory"
 	"redis_golang/pkg/logger"
 )
@@ -91,7 +92,8 @@ func RunAsyncTCPServer() {
 				}
 
 				conClients++
-				logger.Log.Info("new client connected", "total_clients", conClients)
+				metrics.IncConn()
+				logger.Log.Info("new client connected", "total_clients", metrics.GetActiveConnections())
 				syscall.SetNonblock(fd, true)
 
 				socketClientEvent := syscall.EpollEvent{
@@ -106,6 +108,7 @@ func RunAsyncTCPServer() {
 					logger.Log.Info("client disconnected", "fd", events[i].Fd)
 					syscall.Close(int(events[i].Fd))
 					conClients--
+					metrics.DecConn()
 					continue
 				}
 
@@ -115,6 +118,7 @@ func RunAsyncTCPServer() {
 					logger.Log.Error("client read error", "error", err)
 					syscall.Close(int(events[i].Fd))
 					conClients--
+					metrics.DecConn()
 					continue
 				}
 				

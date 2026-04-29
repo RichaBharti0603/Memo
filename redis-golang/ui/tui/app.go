@@ -1,0 +1,140 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	
+	"redis_golang/internal/metrics"
+	"redis_golang/internal/storage/memory"
+	"redis_golang/pkg/logger"
+)
+
+// Styles
+var (
+	baseStyle = lipgloss.NewStyle().
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color("240"))
+
+	titleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FFCC")).
+			Bold(true).
+			Padding(0, 1).
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#00FFCC"))
+
+	statBoxStyle = lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("62")).
+			Padding(1, 2).
+			Align(lipgloss.Center)
+
+	statLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Bold(true)
+	statValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF00FF")).Bold(true)
+
+	logBoxStyle = lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("240")).
+			Padding(1, 2).
+			Width(80).
+			Height(10)
+)
+
+type tickMsg time.Time
+
+type model struct {
+	quitting bool
+}
+
+func initialModel() model {
+	return model{}
+}
+
+func (m model) Init() tea.Cmd {
+	return tickCmd()
+}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+		}
+	case tickMsg:
+		return m, tickCmd()
+	}
+	return m, nil
+}
+
+func (m model) View() string {
+	if m.quitting {
+		return "Shutting down TUI...\n"
+	}
+
+	// Gather stats
+	keys := len(memory.GetAllKeys()) // Note: for production, we should add memory.Count() to avoid allocation
+	conns := metrics.GetActiveConnections()
+	cmds := metrics.GetTotalCommands()
+	hits := metrics.GetCacheHits()
+	misses := metrics.GetCacheMisses()
+
+	hitRate := 0.0
+	if hits+misses > 0 {
+		hitRate = float64(hits) / float64(hits+misses) * 100
+	}
+
+	// Render Title
+	title := titleStyle.Render("REDIS-GOLANG DASHBOARD")
+
+	// Render Stats
+	statConns := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("CONNS"), statValueStyle.Render(fmt.Sprintf("%d", conns))))
+	statKeys := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("KEYS"), statValueStyle.Render(fmt.Sprintf("%d", keys))))
+	statCmds := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("CMDS"), statValueStyle.Render(fmt.Sprintf("%d", cmds))))
+	statHits := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("HIT RATE"), statValueStyle.Render(fmt.Sprintf("%.1f%%", hitRate))))
+
+	statsRow := lipgloss.JoinHorizontal(lipgloss.Top, statConns, statKeys, statCmds, statHits)
+
+	// Render Logs
+	logs := logger.MemHandler.FormatLogs()
+	start := 0
+	if len(logs) > 8 {
+		start = len(logs) - 8
+	}
+	logContent := strings.Join(logs[start:], "\n")
+	logBox := logBoxStyle.Render("RECENT LOGS\n\n" + logContent)
+
+	// Layout
+	layout := lipgloss.JoinVertical(lipgloss.Left,
+		title,
+		"\n",
+		statsRow,
+		"\n",
+		logBox,
+		"\nPress 'q' or 'ctrl+c' to quit.",
+	)
+
+	return lipgloss.Place(
+		100, 30,
+		lipgloss.Center, lipgloss.Center,
+		layout,
+	)
+}
+
+func StartApp() error {
+	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		return err
+	}
+	return nil
+}
