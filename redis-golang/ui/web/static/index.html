@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redis-Golang Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="dashboard">
+        <header class="header">
+            <div class="logo">
+                <div class="glow-orb"></div>
+                <h1>REDIS<span>GOLANG</span></h1>
+            </div>
+            <div class="status">
+                <span class="indicator pulse"></span>
+                <span>System Online</span>
+            </div>
+        </header>
+
+        <main class="grid-container">
+            <div class="card stat-card">
+                <h3>Connections</h3>
+                <div class="value" id="val-conns">0</div>
+            </div>
+            <div class="card stat-card">
+                <h3>Total Keys</h3>
+                <div class="value" id="val-keys">0</div>
+            </div>
+            <div class="card stat-card">
+                <h3>Commands</h3>
+                <div class="value" id="val-cmds">0</div>
+            </div>
+            <div class="card stat-card">
+                <h3>Hit Rate</h3>
+                <div class="value" id="val-hits">0%</div>
+            </div>
+
+            <div class="card panel logs-panel">
+                <div class="panel-header">
+                    <h3>Live Logs</h3>
+                </div>
+                <div class="terminal" id="terminal-logs">
+                    <!-- Logs injected here -->
+                </div>
+            </div>
+
+            <div class="card panel keys-panel">
+                <div class="panel-header">
+                    <h3>Key Browser</h3>
+                    <button id="refresh-keys">Refresh</button>
+                </div>
+                <div class="table-container">
+                    <table id="keys-table">
+                        <thead>
+                            <tr>
+                                <th>Key Name</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Keys injected here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
