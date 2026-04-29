@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	
 	"redis_golang/internal/metrics"
+	"redis_golang/internal/replication"
 	"redis_golang/internal/storage/memory"
 	"redis_golang/pkg/logger"
 )
@@ -43,10 +44,25 @@ var (
 			Height(10)
 )
 
-type tickMsg time.Time
+type tickMsg struct {
+	conns    int64
+	keys     int64
+	commands int64
+	hits     int64
+	misses   int64
+	role     string
+	replicas int64
+}
 
 type model struct {
 	quitting bool
+	conns    int64
+	keys     int64
+	commands int64
+	hits     int64
+	misses   int64
+	role     string
+	replicas int64
 }
 
 func initialModel() model {
@@ -59,7 +75,15 @@ func (m model) Init() tea.Cmd {
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
-		return tickMsg(t)
+		return tickMsg{
+			conns:    metrics.GetActiveConnections(),
+			keys:     int64(len(memory.GetAllKeys())),
+			commands: metrics.GetTotalCommands(),
+			hits:     metrics.GetCacheHits(),
+			misses:   metrics.GetCacheMisses(),
+			role:     string(replication.GlobalRole),
+			replicas: metrics.GetConnectedReplicas(),
+		}
 	})
 }
 
@@ -72,6 +96,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case tickMsg:
+		m.conns = msg.conns
+		m.keys = msg.keys
+		m.commands = msg.commands
+		m.hits = msg.hits
+		m.misses = msg.misses
+		m.role = msg.role
+		m.replicas = msg.replicas
 		return m, tickCmd()
 	}
 	return m, nil
@@ -82,25 +113,24 @@ func (m model) View() string {
 		return "Shutting down TUI...\n"
 	}
 
-	// Gather stats
-	keys := len(memory.GetAllKeys()) // Note: for production, we should add memory.Count() to avoid allocation
-	conns := metrics.GetActiveConnections()
-	cmds := metrics.GetTotalCommands()
-	hits := metrics.GetCacheHits()
-	misses := metrics.GetCacheMisses()
-
 	hitRate := 0.0
-	if hits+misses > 0 {
-		hitRate = float64(hits) / float64(hits+misses) * 100
+	if m.hits+m.misses > 0 {
+		hitRate = float64(m.hits) / float64(m.hits+m.misses) * 100
 	}
 
 	// Render Title
 	title := titleStyle.Render("REDIS-GOLANG DASHBOARD")
+	roleStr := "Role: " + strings.ToUpper(m.role)
+	if m.role == "primary" {
+		roleStr += fmt.Sprintf(" | Replicas: %d", m.replicas)
+	}
+
+	header := lipgloss.JoinVertical(lipgloss.Center, title, lipgloss.NewStyle().Foreground(lipgloss.Color("#00ffcc")).Render(roleStr))
 
 	// Render Stats
-	statConns := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("CONNS"), statValueStyle.Render(fmt.Sprintf("%d", conns))))
-	statKeys := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("KEYS"), statValueStyle.Render(fmt.Sprintf("%d", keys))))
-	statCmds := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("CMDS"), statValueStyle.Render(fmt.Sprintf("%d", cmds))))
+	statConns := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("CONNS"), statValueStyle.Render(fmt.Sprintf("%d", m.conns))))
+	statKeys := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("KEYS"), statValueStyle.Render(fmt.Sprintf("%d", m.keys))))
+	statCmds := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("CMDS"), statValueStyle.Render(fmt.Sprintf("%d", m.commands))))
 	statHits := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("HIT RATE"), statValueStyle.Render(fmt.Sprintf("%.1f%%", hitRate))))
 
 	statsRow := lipgloss.JoinHorizontal(lipgloss.Top, statConns, statKeys, statCmds, statHits)
@@ -116,7 +146,7 @@ func (m model) View() string {
 
 	// Layout
 	layout := lipgloss.JoinVertical(lipgloss.Left,
-		title,
+		header,
 		"\n",
 		statsRow,
 		"\n",

@@ -9,6 +9,7 @@ import (
 	"redis_golang/config"
 	"redis_golang/internal/core"
 	"redis_golang/internal/server"
+	"redis_golang/internal/replication"
 	"redis_golang/internal/storage/persistence"
 	"redis_golang/pkg/logger"
 	"redis_golang/ui/tui"
@@ -20,16 +21,20 @@ func main() {
 	var mode string
 	var useTUI bool
 	var webPort int
+	var replicaHost string
+	var replicaPort int
 
 	flag.StringVar(&host, "host", "0.0.0.0", "host for the redis server")
 	flag.IntVar(&port, "port", 6379, "port for the redis server")
 	flag.StringVar(&mode, "mode", "async", "server mode: 'async' or 'sync'")
 	flag.BoolVar(&useTUI, "tui", false, "run the terminal UI dashboard")
 	flag.IntVar(&webPort, "web-port", 8080, "port for the web dashboard (0 to disable)")
+	flag.StringVar(&replicaHost, "replica-host", "", "host of the master to replicate from (if any)")
+	flag.IntVar(&replicaPort, "replica-port", 0, "port of the master to replicate from (if any)")
 	flag.Parse()
 
 	// Initialize Configuration
-	config.InitConfig(host, port)
+	config.InitConfig(host, port, replicaHost, replicaPort)
 	
 	// Initialize Logger
 	logger.InitLogger(useTUI)
@@ -40,6 +45,13 @@ func main() {
 	} else {
 		persistence.ReplayAOF(func(cmd string, args []string, c io.ReadWriter) error {
 			return core.EvalAndRespond(&core.RedisCmd{Cmd: cmd, Args: args}, c)
+		})
+	}
+
+	// Start replication background thread if replica mode is requested via flag
+	if replicaHost != "" && replicaPort > 0 {
+		go replication.StartReplica(replicaHost, replicaPort, func(cmd string, args []string, c io.ReadWriter) error {
+			return core.EvalCommandUnsafe(&core.RedisCmd{Cmd: cmd, Args: args}, c)
 		})
 	}
 

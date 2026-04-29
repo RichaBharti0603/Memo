@@ -14,6 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 hitRate = (data.hits / (data.hits + data.misses)) * 100;
             }
             document.getElementById('val-hits').textContent = hitRate.toFixed(1) + '%';
+            document.getElementById('val-role').textContent = data.role.toUpperCase();
+            document.getElementById('val-replicas').textContent = data.connected_replicas;
         } catch (e) {
             console.error('Failed to fetch stats:', e);
         }

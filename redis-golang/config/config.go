@@ -1,8 +1,10 @@
 package config
 
 type Config struct {
-	Host string
-	Port int
+	Host        string
+	Port        int
+	ReplicaHost string
+	ReplicaPort int
 }
 
 var GlobalConfig = &Config{
@@ -10,7 +12,9 @@ var GlobalConfig = &Config{
 	Port: 6379,
 }
 
-func InitConfig(host string, port int) {
+func InitConfig(host string, port int, replicaHost string, replicaPort int) {
 	GlobalConfig.Host = host
 	GlobalConfig.Port = port
+	GlobalConfig.ReplicaHost = replicaHost
+	GlobalConfig.ReplicaPort = replicaPort
 }

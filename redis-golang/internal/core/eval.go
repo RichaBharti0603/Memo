@@ -4,13 +4,43 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"redis_golang/internal/metrics"
 	"redis_golang/internal/protocol/resp"
+	"redis_golang/internal/pubsub"
+	"redis_golang/internal/replication"
 	"redis_golang/internal/storage/memory"
 	"redis_golang/internal/storage/persistence"
 )
+
+func EvalAndRespond(command string, args []string, c io.ReadWriter) error {
+	switch strings.ToUpper(command) {
+	case "PING":
+		return evalPING(args, c)
+	case "SET":
+		return evalSET(args, c)
+	case "GET":
+		return evalGET(args, c)
+	case "TTL":
+		return evalTTL(args, c)
+	case "DEL":
+		return evalDEL(args, c)
+	case "INCR":
+		return evalINCR(args, c)
+	case "DECR":
+		return evalDECR(args, c)
+	case "SUBSCRIBE":
+		return evalSUBSCRIBE(args, c)
+	case "UNSUBSCRIBE":
+		return evalUNSUBSCRIBE(args, c)
+	case "PUBLISH":
+		return evalPUBLISH(args, c)
+	default:
+		return errors.New("ERR unknown command")
+	}
+}
 
 func evalPING(args []string, c io.ReadWriter) error {
 	var b []byte
@@ -61,6 +91,10 @@ func evalSET(args []string, c io.ReadWriter) error {
 	
 	if persistence.GlobalAOF != nil {
 		persistence.GlobalAOF.WriteCmd("SET", args)
+	}
+
+	if replication.GlobalRole == replication.RolePrimary {
+		replication.Broadcast("SET", args)
 	}
 
 	c.Write([]byte("+OK\r\n"))
@@ -134,6 +168,9 @@ func evalDEL(args []string, c io.ReadWriter) error {
 			if persistence.GlobalAOF != nil {
 				persistence.GlobalAOF.WriteCmd("DEL", []string{key})
 			}
+			if replication.GlobalRole == replication.RolePrimary {
+				replication.Broadcast("DEL", []string{key})
+			}
 		}
 	}
 
@@ -168,6 +205,9 @@ func evalINCR(args []string, c io.ReadWriter) error {
 	if persistence.GlobalAOF != nil {
 		persistence.GlobalAOF.WriteCmd("INCR", args)
 	}
+	if replication.GlobalRole == replication.RolePrimary {
+		replication.Broadcast("INCR", args)
+	}
 	c.Write(resp.Encode(val, false))
 	return nil
 }
@@ -198,6 +238,9 @@ func evalDECR(args []string, c io.ReadWriter) error {
 	memory.Put(key, memory.NewObj(strconv.FormatInt(val, 10), -1))
 	if persistence.GlobalAOF != nil {
 		persistence.GlobalAOF.WriteCmd("DECR", args)
+	}
+	if replication.GlobalRole == replication.RolePrimary {
+		replication.Broadcast("DECR", args)
 	}
 	c.Write(resp.Encode(val, false))
 	return nil
@@ -235,6 +278,9 @@ func evalHSET(args []string, c io.ReadWriter) error {
 
 	if persistence.GlobalAOF != nil {
 		persistence.GlobalAOF.WriteCmd("HSET", args)
+	}
+	if replication.GlobalRole == replication.RolePrimary {
+		replication.Broadcast("HSET", args)
 	}
 	
 	c.Write(resp.Encode(int64(1), false))
@@ -277,8 +323,111 @@ func evalHGET(args []string, c io.ReadWriter) error {
 	return nil
 }
 
+func evalSUBSCRIBE(args []string, c io.ReadWriter) error {
+	if len(args) == 0 {
+		return errors.New("ERR wrong number of arguments for 'subscribe' command")
+	}
+	
+	// Register subscriber
+	pubsub.Subscribe(c, args)
+	
+	// Acknowledge subscription for each channel
+	for i, ch := range args {
+		payload := resp.EncodeArray([]string{"subscribe", ch, strconv.Itoa(i + 1)})
+		c.Write(payload)
+	}
+	return nil
+}
+
+func evalUNSUBSCRIBE(args []string, c io.ReadWriter) error {
+	pubsub.Unsubscribe(c, args)
+	
+	if len(args) == 0 {
+		// Redis behavior: returns unsubscribe payload for all channels.
+		// For MVP, we just send a generic OK or let the client close.
+		c.Write(resp.EncodeArray([]string{"unsubscribe", "", "0"}))
+	} else {
+		for i, ch := range args {
+			payload := resp.EncodeArray([]string{"unsubscribe", ch, strconv.Itoa(len(args) - (i + 1))})
+			c.Write(payload)
+		}
+	}
+	return nil
+}
+
+func evalPUBLISH(args []string, c io.ReadWriter) error {
+	if len(args) != 2 {
+		return errors.New("ERR wrong number of arguments for 'publish' command")
+	}
+	channel, message := args[0], args[1]
+	
+	receivers := pubsub.Publish(channel, message)
+	
+	if replication.GlobalRole == replication.RolePrimary {
+		replication.Broadcast("PUBLISH", args)
+	}
+	
+	c.Write(resp.Encode(int64(receivers), false))
+	return nil
+}
+
+func isWriteCommand(cmd string) bool {
+	switch cmd {
+	case "SET", "DEL", "INCR", "DECR", "HSET":
+		return true
+	}
+	return false
+}
+
 func EvalAndRespond(cmd *RedisCmd, c io.ReadWriter) error {
 	metrics.IncCmd()
+
+	if isWriteCommand(cmd.Cmd) && replication.GlobalRole == replication.RoleReplica {
+		c.Write([]byte("-READONLY You can't write against a read only replica.\r\n"))
+		return nil
+	}
+
+	return EvalCommandUnsafe(cmd, c)
+}
+
+func evalSYNC(args []string, c io.ReadWriter) error {
+	// Only master should handle SYNC
+	if replication.GlobalRole != replication.RolePrimary {
+		c.Write([]byte("-ERR I am not a master\r\n"))
+		return nil
+	}
+	replication.HandleSync(c)
+	return nil
+}
+
+func evalREPLICAOF(args []string, c io.ReadWriter) error {
+	if len(args) != 2 {
+		return errors.New("ERR wrong number of arguments for 'replicaof' command")
+	}
+	host := args[0]
+	portStr := args[1]
+	
+	if host == "NO" && portStr == "ONE" {
+		replication.GlobalRole = replication.RolePrimary
+		c.Write([]byte("+OK\r\n"))
+		return nil
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return errors.New("ERR invalid port")
+	}
+
+	// Start replica in background
+	go replication.StartReplica(host, port, func(cmd string, args []string, c io.ReadWriter) error {
+		return EvalCommandUnsafe(&RedisCmd{Cmd: cmd, Args: args}, c)
+	})
+
+	c.Write([]byte("+OK\r\n"))
+	return nil
+}
+
+func EvalCommandUnsafe(cmd *RedisCmd, c io.ReadWriter) error {
 	switch cmd.Cmd {
 	case "PING":
 		return evalPING(cmd.Args, c)
@@ -298,6 +447,16 @@ func EvalAndRespond(cmd *RedisCmd, c io.ReadWriter) error {
 		return evalHSET(cmd.Args, c)
 	case "HGET":
 		return evalHGET(cmd.Args, c)
+	case "SYNC":
+		return evalSYNC(cmd.Args, c)
+	case "REPLICAOF":
+		return evalREPLICAOF(cmd.Args, c)
+	case "SUBSCRIBE":
+		return evalSUBSCRIBE(cmd.Args, c)
+	case "UNSUBSCRIBE":
+		return evalUNSUBSCRIBE(cmd.Args, c)
+	case "PUBLISH":
+		return evalPUBLISH(cmd.Args, c)
 	default:
 		return evalPING(cmd.Args, c)
 	}

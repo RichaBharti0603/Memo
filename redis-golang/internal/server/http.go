@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"redis_golang/internal/metrics"
+	"redis_golang/internal/replication"
 	"redis_golang/internal/storage/memory"
 	"redis_golang/pkg/logger"
 	"redis_golang/ui/web"
@@ -22,11 +23,13 @@ func RunHTTPServer(port int) {
 		keys := memory.GetAllKeys() // NOTE: O(N) operation, fine for now but optimize later
 		
 		stats := map[string]interface{}{
-			"connections":    metrics.GetActiveConnections(),
-			"total_commands": metrics.GetTotalCommands(),
-			"hits":           metrics.GetCacheHits(),
-			"misses":         metrics.GetCacheMisses(),
-			"total_keys":     len(keys),
+			"connections":        metrics.GetActiveConnections(),
+			"total_commands":     metrics.GetTotalCommands(),
+			"hits":               metrics.GetCacheHits(),
+			"misses":             metrics.GetCacheMisses(),
+			"total_keys":         len(keys),
+			"role":               string(replication.GlobalRole),
+			"connected_replicas": metrics.GetConnectedReplicas(),
 		}
 		json.NewEncoder(w).Encode(stats)
 	})
